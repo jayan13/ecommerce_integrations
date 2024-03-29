@@ -61,6 +61,12 @@ def create_sales_invoice(shopify_order, setting, so):
 		sales_invoice.naming_series = setting.sales_invoice_series or "SI-Shopify-"
 		sales_invoice.flags.ignore_mandatory = True
 		#set_cost_center(sales_invoice.items, setting.cost_center)
+		
+		for line_item in line_items:
+			if line_item.get("tax_lines",''):
+				sales_invoice.vat_emirate='Dubai'
+		
+
 		sales_invoice.insert(ignore_mandatory=True)
 		sales_invoice.submit()
 		if sales_invoice.grand_total > 0:
