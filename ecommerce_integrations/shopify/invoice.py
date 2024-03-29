@@ -60,7 +60,7 @@ def create_sales_invoice(shopify_order, setting, so):
 		sales_invoice.due_date = posting_date
 		sales_invoice.naming_series = setting.sales_invoice_series or "SI-Shopify-"
 		sales_invoice.flags.ignore_mandatory = True
-		set_cost_center(sales_invoice.items, cost_center)
+		#set_cost_center(sales_invoice.items, setting.cost_center)
 		sales_invoice.insert(ignore_mandatory=True)
 		sales_invoice.submit()
 		if sales_invoice.grand_total > 0:
@@ -79,7 +79,7 @@ def make_payament_entry_against_sales_invoice(doc, shopify_order, setting, posti
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
 	if len(shopify_order.get('payment_gateway_names')):
-		pa=frappe.db.get_all('Payment Method Accounts',filters={'parent':'Shopify Setting'},fields=['payment_method','account','cost_center'])
+		pa=frappe.db.get_all('Payment Method Accounts',filters={'parent':'Shopify Setting'},fields=['payment_method','account'])
 		for p in pa:
 			if p.payment_method in shopify_order.get('payment_gateway_names'):
 				bank_account=p.account or setting.cash_bank_account
