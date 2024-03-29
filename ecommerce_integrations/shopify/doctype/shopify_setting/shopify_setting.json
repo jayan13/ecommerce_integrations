@@ -23,6 +23,8 @@
   "cash_bank_account",
   "column_break_19",
   "cost_center",
+  "section_break_dgrf",
+  "payment_method_and_accounts",
   "section_break_25",
   "sales_order_series",
   "delivery_note_series",
@@ -40,6 +42,8 @@
   "default_sales_tax_account",
   "column_break_qibo",
   "default_shipping_charges_account",
+  "section_break_khkf",
+  "vendor_account_mapping",
   "erpnext_to_shopify_sync_section",
   "upload_erpnext_items",
   "update_shopify_item_on_update",
@@ -387,12 +391,32 @@
    "fieldtype": "Link",
    "label": "Default Shipping Charges Account",
    "options": "Account"
+  },
+  {
+   "fieldname": "section_break_dgrf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "payment_method_and_accounts",
+   "fieldtype": "Table",
+   "label": "Payment Method and Accounts",
+   "options": "Payment Method Accounts"
+  },
+  {
+   "fieldname": "section_break_khkf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "vendor_account_mapping",
+   "fieldtype": "Table",
+   "label": "Vendor Account Mapping",
+   "options": "Vendor Account Mapping"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-10-24 10:38:49.247431",
+ "modified": "2024-03-26 10:26:03.882995",
  "modified_by": "Administrator",
  "module": "shopify",
  "name": "Shopify Setting",

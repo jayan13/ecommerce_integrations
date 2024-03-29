@@ -197,9 +197,17 @@ def _get_total_discount(line_item) -> float:
 def get_order_taxes(shopify_order, setting, items):
 	taxes = []
 	line_items = shopify_order.get("line_items")
-
+	vsaccount=''
+	vcenter=''
 	for line_item in line_items:
 		item_code = get_item_code(line_item)
+		vsett=frappe.db.get_value('Vendor Account Mapping', {'parent':'Shopify Setting','vendor':line_item.get("vendor")}, ['shipping_revenue_account','vendor_cost_center'], as_dict=1)
+		if not vsett:
+			vsett=frappe.db.get_value('Vendor Account Mapping', {'parent':'Shopify Setting','vendor':['is', 'null']}, ['shipping_revenue_account','vendor_cost_center'], as_dict=1)
+		
+		if vsett:
+			vsaccount=vsett.shipping_revenue_account
+			vcenter=vsett.vendor_cost_center
 		for tax in line_item.get("tax_lines"):
 			taxes.append(
 				{
@@ -210,7 +218,7 @@ def get_order_taxes(shopify_order, setting, items):
 					),
 					"tax_amount": tax.get("price"),
 					"included_in_print_rate": 0,
-					"cost_center": setting.cost_center,
+					"cost_center": vcenter or setting.cost_center,
 					"item_wise_tax_detail": {item_code: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]},
 					"dont_recompute_tax": 1,
 				}
@@ -220,7 +228,7 @@ def get_order_taxes(shopify_order, setting, items):
 		taxes,
 		shopify_order.get("shipping_lines"),
 		setting,
-		items,
+		items, vsaccount, vcenter,
 		taxes_inclusive=shopify_order.get("taxes_included"),
 	)
 
@@ -285,7 +293,7 @@ def get_tax_account_description(tax):
 	return tax_description
 
 
-def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxes_inclusive=False):
+def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, vsaccount, vcenter, taxes_inclusive=False):
 	"""Shipping lines represents the shipping details,
 	each such shipping detail consists of a list of tax_lines"""
 	shipping_as_item = cint(setting.add_shipping_as_item) and setting.shipping_item
@@ -319,7 +327,7 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 						"account_head": get_tax_account_head(shipping_charge, charge_type="shipping"),
 						"description": get_tax_account_description(shipping_charge) or shipping_charge["title"],
 						"tax_amount": shipping_charge_amount,
-						"cost_center": setting.cost_center,
+						"cost_center": vcenter or setting.cost_center,
 					}
 				)
 
@@ -327,12 +335,12 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, taxe
 			taxes.append(
 				{
 					"charge_type": "Actual",
-					"account_head": get_tax_account_head(tax, charge_type="sales_tax"),
+					"account_head": vsaccount or get_tax_account_head(tax, charge_type="sales_tax"),
 					"description": (
 						get_tax_account_description(tax) or f"{tax.get('title')} - {tax.get('rate') * 100.0:.2f}%"
 					),
 					"tax_amount": tax["price"],
-					"cost_center": setting.cost_center,
+					"cost_center": vcenter or setting.cost_center,
 					"item_wise_tax_detail": {
 						setting.shipping_item: [flt(tax.get("rate")) * 100, flt(tax.get("price"))]
 					}
