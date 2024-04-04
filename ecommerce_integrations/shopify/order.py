@@ -441,3 +441,143 @@ def _fetch_old_orders(from_time, to_time):
 			# Using generator instead of fetching all at once is better for
 			# avoiding rate limits and reducing resource usage.
 			yield order.to_dict()
+
+def refund(payload, request_id=None):
+	refunds = payload
+	frappe.set_user("Administrator")
+	frappe.flags.request_id = request_id
+	order_id=frappe.db.get_value("Sales Order", filters={ORDER_ID_FIELD: cstr(refunds["order_id"])})
+	setting = frappe.get_doc(SETTING_DOCTYPE)
+	ermsg=''
+	if not order_id:
+		create_shopify_log(status="Invalid", message="Sales order Not exists, not synced")
+		return
+	try:
+		
+		
+		shipd=refunds.get("order_adjustments")
+		shipamt=0
+		#gateway=refunds.get("transactions")[0].gateway
+		
+		for ship in shipd:
+			if ship.get("reason")=="Shipping refund":
+				shipamt+=(float(ship.get("amount")) or 0) +(float(ship.get("tax_amount")) or 0)
+
+		rline_items=refunds.get("refund_line_items")
+		order=frappe.get_doc("Sales Order",order_id)
+		reitem=[]
+		refunditm=[]
+		for rlinei in rline_items:
+			rline=rlinei.get("line_item")
+			tax=rlinei.get('total_tax') or 0
+			subtotal=rlinei.get('subtotal') or 0
+			product_amt=subtotal-tax
+			qty=rline.get("quantity")
+			item_code=frappe.db.get_value('Ecommerce Item',{'integration_item_code':rline.get('product_id'),'variant_id':rline.get('variant_id')},'erpnext_item_code')
+			if not item_code and rline.get('sku'):
+				item_code=frappe.db.get_value('Ecommerce Item',{'integration_item_code':rline.get('product_id'),'sku':rline.get('sku')},'erpnext_item_code')
+			reitem.append(item_code)
+			refunditm.append({"item_code":item_code,"amt":product_amt,"tax":tax,"qty":qty})
+		
+		delivary_note=frappe.db.get_value("Delivery Note",{"is_return":0,"shopify_order_id":order.shopify_order_id,"shopify_order_number":order.shopify_order_number},'name')
+		delivarynote_doc=frappe.get_doc("Delivery Note",delivary_note)
+		delivary_note_doc=frappe.copy_doc(delivarynote_doc)
+		items=[]
+		taxes=[]
+		
+		for itm in delivary_note_doc.items:
+			if itm.item_code in reitem:
+				#item line
+				itm.update({
+					"name":'',
+					"parent":'',
+					"amount":itm.amount *-1,
+					"base_amount":itm.base_amount *-1,
+					"base_net_amount":itm.base_net_amount *-1,
+					"net_amount":itm.net_amount *-1,
+					"tax_amount":itm.tax_amount *-1,
+					"total_amount":itm.total_amount *-1,
+					"qty":itm.qty *-1,
+					"stock_qty":itm.stock_qty *-1,
+					})
+				items.append(itm)
+		
+		subtot=0
+		for tx in delivary_note_doc.taxes:			
+			if setting.default_sales_tax_account==tx.account_head:
+				#tax line
+				tax=0
+				for itm in refunditm:
+					tax+=itm.get('tax')
+					subtot+=itm.get('amt')+itm.get('tax')
+
+				tx.update({
+					"name":'',
+					"parent":'',
+					"base_tax_amount": tax*delivary_note_doc.conversion_rate*-1,
+					"base_tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
+					"base_total": subtot*-1*delivary_note_doc.conversion_rate,
+					"tax_amount": tax*delivary_note_doc.conversion_rate*-1,
+					"tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
+					"total": subtot*-1,	
+					})
+				taxes.append(tx)
+			else:
+				#shipping line conversion_rate
+				
+				tx.update({
+					"base_tax_amount": shipamt*delivary_note_doc.conversion_rate,
+					"base_tax_amount_after_discount_amount": shipamt*delivary_note_doc.conversion_rate,
+					"base_total": ((subtot*-1)+shipamt)*delivary_note_doc.conversion_rate,
+					"tax_amount": shipamt,
+					"tax_amount_after_discount_amount": shipamt,
+					"total": (subtot*-1)+shipamt,	
+					})
+				taxes.append(tx)
+
+	
+		
+		delivary_note_doc.update({
+			"name":'',
+			"naming_series": setting.delivery_note_return_series,
+			"posting_date": getdate(),
+			"posting_time": get_datetime().strftime("%H:%M:%S"),
+			"status":"Draft",
+			"is_return":1,
+			"return_against":delivary_note,
+			"items": items,
+			"taxes": taxes,
+		})
+		
+		
+		ermsg=str(delivary_note_doc.as_dict())
+		dlv = frappe.get_doc(delivary_note_doc)
+		dlv.flags.ignore_mandatory = True
+		dlv.save(ignore_permissions=True)
+		dlv.submit()
+		
+		frappe.db.set_value("Delivery Note",delivary_note,'status','Return Issued')
+		#credit note 
+		from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
+
+		return_invoice = make_sales_invoice(dlv.name)
+		return_invoice.shopify_order_id=order.shopify_order_id
+		return_invoice.shopify_order_number=order.shopify_order_number
+		return_invoice.update({"naming_series":setting.credit_note_series}),
+		return_invoice.is_return = True
+		ermsg=str(return_invoice.as_dict())
+		return_invoice.save()
+		return_invoice.submit()
+
+		from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+		pentry=get_payment_entry('Sales Invoice',return_invoice.name)
+		pentry.reference_no = str(order.shopify_order_number)+" Refund"
+		pentry.update({'reference_date': nowdate()})
+		ermsg=str(pentry.as_dict())
+		pentry.save()
+		pentry.submit()
+
+	except Exception as e:
+		create_shopify_log(status="Error", exception=e,message=ermsg, rollback=True)
+	else:
+		create_shopify_log(status="Success")
