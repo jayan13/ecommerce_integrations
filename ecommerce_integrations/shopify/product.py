@@ -117,17 +117,18 @@ class ShopifyProduct:
 				item_attr.append("item_attribute_values", {"attribute_value": attr_value, "abbr": attr_value})
 
 	def _create_item(self, product_dict, warehouse, has_variant=0, attributes=None, variant_of=None):
+		itm_sku=product_dict.get("sku") or _get_sku(product_dict)
 		item_dict = {
 			"variant_of": variant_of,
 			"is_stock_item": 1,
-			"item_code": cstr(product_dict.get("sku")) or cstr(product_dict.get("item_code")) or cstr(product_dict.get("id")),
+			"item_code": itm_sku or cstr(product_dict.get("item_code")) or cstr(product_dict.get("id")),
 			"item_name": product_dict.get("title", "").strip(),
 			"description": product_dict.get("body_html") or product_dict.get("title"),
 			"item_group": self._get_item_group(product_dict.get("product_type")),
 			"has_variants": has_variant,
 			"attributes": attributes or [],
 			"stock_uom": product_dict.get("uom") or _("Nos"),
-			"sku": product_dict.get("sku") or _get_sku(product_dict),
+			"sku": itm_sku,
 			"default_warehouse": warehouse,
 			"image": _get_item_image(product_dict),
 			"weight_uom": WEIGHT_TO_ERPNEXT_UOM_MAP[product_dict.get("weight_unit")],
