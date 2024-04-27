@@ -125,8 +125,8 @@ def create_sales_order(shopify_order, setting, company=None):
 
 		line_items = shopify_order.get("line_items")
 		for line_item in line_items:
-			if line_item.get("tax_lines",''):
-				so.update({"vat_emirate": "Dubai"})
+			if line_item.get("tax_lines",'') and setting.vat_emirate:
+				so.update({"vat_emirate": setting.vat_emirate})
 
 		so.flags.ignore_mandatory = True
 		so.flags.shopiy_order_json = json.dumps(shopify_order)
@@ -316,6 +316,8 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, setting, items, vsac
 				shipping_charge_amount -= total_tax
 
 			if shipping_as_item:
+				vsaccount=''
+				vcenter=''
 				items.append(
 					{
 						"item_code": setting.shipping_item,
@@ -454,19 +456,27 @@ def refund(payload, request_id=None):
 		return
 	try:
 		
-		
 		shipd=refunds.get("order_adjustments")
 		shipamt=0
+		reitem=[]
+		refunditm=[]
 		#gateway=refunds.get("transactions")[0].gateway
+		if setting.add_shipping_as_item:
+			for ship in shipd:
+				if ship.get("reason")=="Shipping refund":
+					shipamt+=float(ship.get("tax_amount")) or 0
+					reitem.append(setting.shipping_item)
+					refunditm.append({"item_code":setting.shipping_item,"amt":float(ship.get("amount"))*-1,"tax":float(ship.get("tax_amount"))*-1,"qty":1})
 		
-		for ship in shipd:
-			if ship.get("reason")=="Shipping refund":
-				shipamt+=(float(ship.get("amount")) or 0) +(float(ship.get("tax_amount")) or 0)
+		else:
+			for ship in shipd:
+				if ship.get("reason")=="Shipping refund":
+					shipamt+=(float(ship.get("amount")) or 0) +(float(ship.get("tax_amount")) or 0)
+		
 
 		rline_items=refunds.get("refund_line_items")
 		order=frappe.get_doc("Sales Order",order_id)
-		reitem=[]
-		refunditm=[]
+		
 		for rlinei in rline_items:
 			rline=rlinei.get("line_item")
 			tax=rlinei.get('total_tax') or 0
@@ -479,98 +489,182 @@ def refund(payload, request_id=None):
 			reitem.append(item_code)
 			refunditm.append({"item_code":item_code,"amt":product_amt,"tax":tax,"qty":qty})
 		
-		delivary_note=frappe.db.get_value("Delivery Note",{"is_return":0,"shopify_order_id":order.shopify_order_id,"shopify_order_number":order.shopify_order_number},'name')
-		delivarynote_doc=frappe.get_doc("Delivery Note",delivary_note)
-		delivary_note_doc=frappe.copy_doc(delivarynote_doc)
+		#------------------------ return delivary note-----------------------
 		items=[]
 		taxes=[]
-		
-		for itm in delivary_note_doc.items:
-			if itm.item_code in reitem:
-				#item line
-				itm.update({
+
+		delivary_note=frappe.db.get_value("Delivery Note",{"is_return":0,"shopify_order_id":order.shopify_order_id,"shopify_order_number":order.shopify_order_number},'name')
+		if delivary_note:
+			delivarynote_doc=frappe.get_doc("Delivery Note",delivary_note)
+			delivary_note_doc=frappe.copy_doc(delivarynote_doc)
+			
+			for itm in delivary_note_doc.items:
+				if itm.item_code in reitem and itm.item_code!=setting.shipping_item:
+					#item line
+					itm.update({
+						"name":'',
+						"parent":'',
+						"amount":itm.amount *-1,
+						"base_amount":itm.base_amount *-1,
+						"base_net_amount":itm.base_net_amount *-1,
+						"net_amount":itm.net_amount *-1,
+						"tax_amount":itm.tax_amount *-1,
+						"total_amount":itm.total_amount *-1,
+						"qty":itm.qty *-1,
+						"stock_qty":itm.stock_qty *-1,
+						})
+					items.append(itm)
+
+			if len(items):
+				subtot=0
+				for tx in delivary_note_doc.taxes:			
+					if setting.default_sales_tax_account==tx.account_head:
+						#tax line
+						tax=0
+						for itm in refunditm:
+							tax+=itm.get('tax')
+							subtot+=itm.get('amt')+itm.get('tax')
+
+						tx.update({
+							"name":'',
+							"parent":'',
+							"base_tax_amount": tax*delivary_note_doc.conversion_rate*-1,
+							"base_tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
+							"base_total": subtot*-1*delivary_note_doc.conversion_rate,
+							"tax_amount": tax*delivary_note_doc.conversion_rate*-1,
+							"tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
+							"total": subtot*-1,	
+							})
+						taxes.append(tx)
+					else:
+						#shipping line conversion_rate
+						
+						tx.update({
+							"base_tax_amount": shipamt*delivary_note_doc.conversion_rate,
+							"base_tax_amount_after_discount_amount": shipamt*delivary_note_doc.conversion_rate,
+							"base_total": ((subtot*-1)+shipamt)*delivary_note_doc.conversion_rate,
+							"tax_amount": shipamt,
+							"tax_amount_after_discount_amount": shipamt,
+							"total": (subtot*-1)+shipamt,	
+							})
+						taxes.append(tx)
+				
+			
+				
+				delivary_note_doc.update({
 					"name":'',
-					"parent":'',
-					"amount":itm.amount *-1,
-					"base_amount":itm.base_amount *-1,
-					"base_net_amount":itm.base_net_amount *-1,
-					"net_amount":itm.net_amount *-1,
-					"tax_amount":itm.tax_amount *-1,
-					"total_amount":itm.total_amount *-1,
-					"qty":itm.qty *-1,
-					"stock_qty":itm.stock_qty *-1,
-					})
-				items.append(itm)
-		if len(items):
+					"naming_series": setting.delivery_note_return_series,
+					"posting_date": getdate(),
+					"posting_time": get_datetime().strftime("%H:%M:%S"),
+					"status":"Draft",
+					"is_return":1,
+					"return_against":delivary_note,
+					"items": items,
+					"taxes": taxes,
+				})
+				
+				
+				ermsg=str(delivary_note_doc.as_dict())
+				dlv = frappe.get_doc(delivary_note_doc)
+				dlv.flags.ignore_mandatory = True
+				dlv.save(ignore_permissions=True)
+				dlv.submit()
+				
+				frappe.db.set_value("Delivery Note",delivary_note,'status','Return Issued') 
+
+		if len(reitem):
+			
+			#----------- credit note-------------------------------
+			items=[]
+			taxes=[]
+			sales_invoice=''
+			sinv=frappe.db.sql(""" select name from `tabSales Invoice` where status="Paid" and shopify_order_id="{0}" and shopify_order_number="{1}" """.format(order.shopify_order_id,order.shopify_order_number),as_dict=1)
+			if len(sinv):
+				sales_invoice=sinv[0].name
+
+			posting_date = getdate(refunds.get("created_at")) or nowdate()
+			salesinv_doc=frappe.get_doc("Sales Invoice",sales_invoice)
+			return_invoice=frappe.copy_doc(salesinv_doc)
+			return_invoice.name=''
+			return_invoice.posting_date = posting_date
+			return_invoice.shopify_order_id=order.shopify_order_id
+			return_invoice.shopify_order_number=order.shopify_order_number
+			return_invoice.update({"naming_series":setting.credit_note_series})
+			return_invoice.flags.ignore_mandatory = True
+			return_invoice.is_return = True
+			return_invoice.return_against=sales_invoice
+			return_invoice.status='Return'
+			return_invoice.payment_schedule=[]
+			
+			for itms in return_invoice.items:
+				if itms.item_code in reitem:
+					itms.update({
+						'amount':itms.amount*-1,
+						'base_amount':itms.base_amount*-1,
+						'base_net_amount':itms.base_net_amount*-1,
+						'net_amount':itms.net_amount*-1,
+						'qty':itms.qty*-1,
+						'stock_qty':itms.stock_qty*-1,
+						'tax_amount':itms.tax_amount*-1,
+						'total_amount':itms.total_amount*-1
+						})
+					items.append(itms) 
+
 			subtot=0
-			for tx in delivary_note_doc.taxes:			
-				if setting.default_sales_tax_account==tx.account_head:
-					#tax line
+			for taxs in return_invoice.taxes:
+				if setting.add_shipping_as_item:
 					tax=0
 					for itm in refunditm:
 						tax+=itm.get('tax')
 						subtot+=itm.get('amt')+itm.get('tax')
 
-					tx.update({
-						"name":'',
-						"parent":'',
-						"base_tax_amount": tax*delivary_note_doc.conversion_rate*-1,
-						"base_tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
-						"base_total": subtot*-1*delivary_note_doc.conversion_rate,
-						"tax_amount": tax*delivary_note_doc.conversion_rate*-1,
-						"tax_amount_after_discount_amount": tax*delivary_note_doc.conversion_rate*-1,
-						"total": subtot*-1,	
+					taxs.update({
+						"base_tax_amount": tax*return_invoice.conversion_rate*-1,
+						"base_tax_amount_after_discount_amount": tax*return_invoice.conversion_rate*-1,
+						"base_total": subtot*-1*return_invoice.conversion_rate,
+						"tax_amount": tax*return_invoice.conversion_rate*-1,
+						"tax_amount_after_discount_amount": tax*return_invoice.conversion_rate*-1,
+						"total": subtot*-1,
 						})
-					taxes.append(tx)
+					taxes.append(taxs)
 				else:
-					#shipping line conversion_rate
-					
-					tx.update({
-						"base_tax_amount": shipamt*delivary_note_doc.conversion_rate,
-						"base_tax_amount_after_discount_amount": shipamt*delivary_note_doc.conversion_rate,
-						"base_total": ((subtot*-1)+shipamt)*delivary_note_doc.conversion_rate,
-						"tax_amount": shipamt,
-						"tax_amount_after_discount_amount": shipamt,
-						"total": (subtot*-1)+shipamt,	
-						})
-					taxes.append(tx)
+					if setting.default_sales_tax_account==taxs.account_head:
+						tax=0
+						for itm in refunditm:
+							tax+=itm.get('tax')
+							subtot+=itm.get('amt')+itm.get('tax')
 
-		
-			
-			delivary_note_doc.update({
-				"name":'',
-				"naming_series": setting.delivery_note_return_series,
-				"posting_date": getdate(),
-				"posting_time": get_datetime().strftime("%H:%M:%S"),
-				"status":"Draft",
-				"is_return":1,
-				"return_against":delivary_note,
-				"items": items,
-				"taxes": taxes,
-			})
-			
-			
-			ermsg=str(delivary_note_doc.as_dict())
-			dlv = frappe.get_doc(delivary_note_doc)
-			dlv.flags.ignore_mandatory = True
-			dlv.save(ignore_permissions=True)
-			dlv.submit()
-			
-			frappe.db.set_value("Delivery Note",delivary_note,'status','Return Issued')
-			#credit note 
-			from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
+						taxs.update({
+							"base_tax_amount": tax*return_invoice.conversion_rate*-1,
+							"base_tax_amount_after_discount_amount": tax*return_invoice.conversion_rate*-1,
+							"base_total": subtot*-1*return_invoice.conversion_rate,
+							"tax_amount": tax*return_invoice.conversion_rate*-1,
+							"tax_amount_after_discount_amount": tax*return_invoice.conversion_rate*-1,
+							"total": subtot*-1,
+							})
+						taxes.append(taxs)
+					else:
+						taxs.update({
+							"base_tax_amount": shipamt*return_invoice.conversion_rate,
+							"base_tax_amount_after_discount_amount": shipamt*return_invoice.conversion_rate,
+							"base_total": ((subtot*-1)+shipamt)*return_invoice.conversion_rate,
+							"tax_amount": shipamt,
+							"tax_amount_after_discount_amount": shipamt,
+							"total": (subtot*-1)+shipamt,	
+							})
+						taxes.append(taxs)
 
-			return_invoice = make_sales_invoice(dlv.name)
-			return_invoice.shopify_order_id=order.shopify_order_id
-			return_invoice.shopify_order_number=order.shopify_order_number
-			return_invoice.update({"naming_series":setting.credit_note_series}),
-			return_invoice.is_return = True
-			ermsg=str(return_invoice.as_dict())
-			return_invoice.save()
-			return_invoice.submit()
-
+			return_invoice.items= items
+			return_invoice.taxes=taxes
+			
+			inv=frappe.get_doc(return_invoice)
+			ermsg=str(inv.as_dict())
+			inv.save()
+			inv.submit()
+			
+			#------------payment entry ---------------------
 			from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-			pentry=get_payment_entry('Sales Invoice',return_invoice.name)
+			pentry=get_payment_entry('Sales Invoice',inv.name)
 			pentry.reference_no = str(order.shopify_order_number)+" Refund"
 			ordpay=frappe.db.sql(""" select paid_from,paid_to from `tabPayment Entry` where reference_no in (select s.name from `tabSales Invoice Item` i left join `tabSales Invoice` s on i.parent=s.name where s.status="Paid" and i.sales_order="{0}") """.format(order_id),as_dict=1)
 			if len(ordpay):
@@ -579,7 +673,7 @@ def refund(payload, request_id=None):
 			pentry.update({'reference_date': nowdate()})
 			ermsg=str(pentry.as_dict())
 			pentry.save()
-			pentry.submit()
+			pentry.submit() 
 		else:
 			create_shopify_log(status="Invalid", message="Sales order item Not exists")
 			return

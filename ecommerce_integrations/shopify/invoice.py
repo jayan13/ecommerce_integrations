@@ -61,10 +61,11 @@ def create_sales_invoice(shopify_order, setting, so):
 		sales_invoice.naming_series = setting.sales_invoice_series or "SI-Shopify-"
 		sales_invoice.flags.ignore_mandatory = True
 		#set_cost_center(sales_invoice.items, setting.cost_center)
+		set_shipping_account(shopify_order,sales_invoice.items,setting)
 		
 		for line_item in line_items:
-			if line_item.get("tax_lines",''):
-				sales_invoice.vat_emirate='Dubai'
+			if line_item.get("tax_lines",'') and setting.vat_emirate:
+				sales_invoice.vat_emirate=setting.vat_emirate
 		
 
 		sales_invoice.insert(ignore_mandatory=True)
@@ -79,6 +80,25 @@ def create_sales_invoice(shopify_order, setting, so):
 def set_cost_center(items, cost_center):
 	for item in items:
 		item.cost_center = cost_center
+
+def set_shipping_account(shopify_order,items,setting):
+	
+	cost_center=setting.cost_center
+	shipping_charges_account=setting.default_shipping_charges_account
+	line_items = shopify_order.get("line_items")
+	for line_item in line_items:
+		vsett=frappe.db.get_value('Vendor Account Mapping', {'parent':'Shopify Setting','vendor':line_item.get("vendor")}, ['shipping_revenue_account','vendor_cost_center'], as_dict=1)
+		if not vsett:
+			vsett=frappe.db.get_value('Vendor Account Mapping', {'parent':'Shopify Setting','vendor':['is', 'null']}, ['shipping_revenue_account','vendor_cost_center'], as_dict=1)
+	
+	if vsett:
+		shipping_charges_account=vsett.shipping_revenue_account or shipping_charges_account
+		cost_center=vsett.vendor_cost_center or cost_center
+
+	for item in items:
+		if setting.shipping_item==item.get('item_code'):
+			item.cost_center = cost_center
+			item.income_account=shipping_charges_account
 
 
 def make_payament_entry_against_sales_invoice(doc, shopify_order, setting, posting_date=None):
