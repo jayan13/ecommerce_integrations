@@ -573,7 +573,7 @@ def get_product():
 		cnt+=1
 		if cnt==100:
 			break
-		frappe.db.sql("update `tabEcommerce Item` set variant_id_new='0' where erpnext_item_code='{0}' and integration_item_code='{1}'".format(pd.erpnext_item_code,product_id))
+		frappe.db.sql("update `tabEcommerce Item` set variant_id_new='0' where erpnext_item_code='{0}' and integration_item_code='{1}'".format(pd.erpnext_item_code,pd.integration_item_code))
 		product_id=pd.integration_item_code
 		shopify_product = Product.find(product_id)
 		for variant in shopify_product.variants:
