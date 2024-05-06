@@ -57,7 +57,7 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 				update_inventory_sync_status(d.ecom_item, time=synced_on)
 				d.status = "Success"
 				if d.cost > 0:
-					update_shopify_product_cost(d.integration_item_code, d.variant_id, d.cost)
+					update_shopify_product_cost(d.variant_id, d.cost, inventory_id)
 			except ResourceNotFound:
 				# Variant or location is deleted, mark as last synced and ignore.
 				update_inventory_sync_status(d.ecom_item, time=synced_on)
@@ -70,23 +70,17 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 
 		_log_inventory_update_status(inventory_sync_batch)
 
-def update_shopify_product_cost(shopify_product_id, variant_id, new_cost)-> None:
+def update_shopify_product_cost(variant_id, new_cost,inventory_id)-> None:
 	setting = frappe.get_doc('Shopify Setting')
 	shopify_api_key = setting.shared_secret
 	shopify_api_password = setting.get_password('password')
 	shopify_store_url = setting.shopify_url
 	data = {
-		"product": {
-			"id": shopify_product_id,
-			"variants": [
-				{
-					"id": variant_id,
-					"cost": new_cost
-					}
-				]
-			}
+		"inventory_item": {
+			"cost": new_cost
 		}
-	api_endpoint = f"https://{shopify_store_url}/admin/api/2024-01/products/{shopify_product_id}.json"
+	}
+	api_endpoint = f"https://{shopify_store_url}/admin/api/2024-01/inventory_items/{variant_id}.json"
 	headers = {
 		"Content-Type": "application/json",
 		"X-Shopify-Access-Token": shopify_api_password
@@ -95,10 +89,7 @@ def update_shopify_product_cost(shopify_product_id, variant_id, new_cost)-> None
 		response = requests.put(api_endpoint, json=data, headers=headers)
 		response.raise_for_status()
 		response_data = response.json()
-		if "product" in response_data:
-			create_shopify_log(method="update_cost_on_shopify", status='Success', message=str(data))
-		else:
-			create_shopify_log(method="update_cost_on_shopify", status='Failed', message=str(response_data))
+		create_shopify_log(method="update_cost_on_shopify", status='Success', message=str(response_data))
 	except requests.exceptions.RequestException as e:
 		ermsg=str(api_endpoint)+str(headers)+str(data)+str(e)
 		create_shopify_log(method="update_cost_on_shopify", status='Error', message=ermsg)
