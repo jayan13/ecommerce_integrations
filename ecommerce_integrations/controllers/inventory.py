@@ -38,6 +38,7 @@ def get_inventory_levels(warehouses: Tuple[str], integration: str) -> List[_dict
 	for dt in data:
 		cost=0
 		valrate=frappe.db.get_value('Stock Ledger Entry',{'item_code':dt.item_code,'warehouse':dt.warehouse,'docstatus':1},'valuation_rate') or 0
+		
 		if valrate:
 			cost = get_incoming_rate({
 							"item_code": dt.item_code,
@@ -47,7 +48,7 @@ def get_inventory_levels(warehouses: Tuple[str], integration: str) -> List[_dict
 							"qty": -1 * dt.actual_qty,
 							'company':setting.company
 						}) or valrate
-		dt.cost=cost or 0 
+		dt.cost=cost or 0
 
 	return data
 
