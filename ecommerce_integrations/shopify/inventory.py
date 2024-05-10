@@ -71,6 +71,8 @@ def upload_inventory_data_to_shopify(inventory_levels, warehous_map) -> None:
 		_log_inventory_update_status(inventory_sync_batch)
 
 def update_shopify_product_cost(inventory_id, new_cost,variant_id)-> None:
+	import time
+	time.sleep(0.5)
 	setting = frappe.get_doc('Shopify Setting')
 	shopify_api_key = setting.shared_secret
 	shopify_api_password = setting.get_password('password')
@@ -91,7 +93,7 @@ def update_shopify_product_cost(inventory_id, new_cost,variant_id)-> None:
 		response_data = response.json()
 		create_shopify_log(method="update_cost_on_shopify", status='Success', message=str(response_data))
 	except requests.exceptions.RequestException as e:
-		ermsg=str(api_endpoint)+str(headers)+str(data)+str(e)
+		ermsg=str(variant_id)+str(data)+str(e)
 		create_shopify_log(method="update_cost_on_shopify", status='Error', message=ermsg)
 
 def _log_inventory_update_status(inventory_levels) -> None:
