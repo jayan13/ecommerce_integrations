@@ -93,7 +93,7 @@ def update_shopify_product_cost(inventory_id, new_cost,variant_id)-> None:
 		response_data = response.json()
 		create_shopify_log(method="update_cost_on_shopify", status='Success', message=str(response_data))
 	except requests.exceptions.RequestException as e:
-		ermsg=str(variant_id)+str(data)+str(e)
+		ermsg=str(variant_id)+': '+str(data)+str(e)
 		create_shopify_log(method="update_cost_on_shopify", status='Error', message=ermsg)
 
 def _log_inventory_update_status(inventory_levels) -> None:
